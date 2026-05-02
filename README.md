@@ -42,6 +42,7 @@ Ejecute la planificación y aplicación de los recursos en la nube.
 - terraform apply -var="environment=dev" -auto-approve
 - terraform apply -var="environment=qa" -auto-approve
 - terraform apply -var="environment=prod" -auto-approve
+
 **4. Limpieza (Destrucción):**
 Para evitar facturación innecesaria (especialmente por los NAT Gateways), asegúrese de destruir el entorno al finalizar las pruebas de la universidad:
 - terraform destroy -var="environment=dev" -auto-approve
