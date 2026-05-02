@@ -6,7 +6,7 @@ resource "aws_vpc" "main" {
   tags = { Name = "vpc-image-processor-${var.environment}" }
 }
 
-# Subredes Públicas (Solo para el IGW y posibles puntos de entrada)
+# Subredes Públicas 
 resource "aws_subnet" "public" {
   count             = 2
   vpc_id            = aws_vpc.main.id
@@ -15,7 +15,7 @@ resource "aws_subnet" "public" {
   tags = { Name = "pub-sub-${count.index}-${var.environment}" }
 }
 
-# Subredes Privadas (Donde vivirán las Lambdas)
+# Subredes Privadas 
 resource "aws_subnet" "private" {
   count             = 2
   vpc_id            = aws_vpc.main.id
@@ -24,12 +24,64 @@ resource "aws_subnet" "private" {
   tags = { Name = "priv-sub-${count.index}-${var.environment}" }
 }
 
-# --- VPC Endpoints (Ahorro de costos: Sin NAT Gateway) ---
+# --- Internet Gateway ---
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+  tags = { Name = "igw-${var.environment}" }
+}
+
+# --- Route Table Pública (Hacia el IGW) ---
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  count          = 2
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
+# --- IPs Elásticas y NAT Gateways (Cajitas NAT_A y NAT_B) ---
+resource "aws_eip" "nat" {
+  count  = 2
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "nat" {
+  count         = 2
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
+  tags = { Name = "nat-${count.index}-${var.environment}" }
+  depends_on    = [aws_internet_gateway.igw]
+}
+
+# --- Route Tables Privadas (Hacia los NAT Gateways) ---
+resource "aws_route_table" "private" {
+  count  = 2
+  vpc_id = aws_vpc.main.id
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat[count.index].id
+  }
+}
+
+resource "aws_route_table_association" "private" {
+  count          = 2
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private[count.index].id
+}
+
+# --- VPC Endpoints (Bloque VPCE del diagrama) ---
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id
   service_name      = "com.amazonaws.us-east-1.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_vpc.main.main_route_table_id]
+  # Se inyecta en las tablas de rutas privadas
+  route_table_ids   = [aws_route_table.private[0].id, aws_route_table.private[1].id]
 }
 
 resource "aws_vpc_endpoint" "sqs" {
@@ -51,7 +103,9 @@ resource "aws_sqs_queue" "dlq" {
 }
 
 resource "aws_sqs_queue" "main_queue" {
-  name = "image-processor-${var.environment}-queue"
+  name                       = "image-processor-${var.environment}-queue"
+  visibility_timeout_seconds = 360 # 6x Lambda timeout según diagrama
+
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.dlq.arn
     maxReceiveCount     = 3
@@ -65,16 +119,38 @@ resource "aws_lambda_function" "upload" {
   handler       = "index.handler"
   runtime       = "nodejs20.x"
   filename      = "lambda/lambda_dummy.zip" 
+  memory_size   = 256 # Especificado en el diagrama
+  timeout       = 30  # Especificado en el diagrama
   vpc_config {
     subnet_ids         = aws_subnet.private[*].id
     security_group_ids = [aws_security_group.lambda_sg.id]
   }
 }
 
-# --- API Gateway y CloudWatch Logs ---
+resource "aws_lambda_function" "crop" {
+  function_name = "crop-lambda-${var.environment}"
+  role          = aws_iam_role.crop_role.arn
+  handler       = "index.handler"
+  runtime       = "nodejs20.x"
+  filename      = "lambda/lambda_dummy.zip" 
+  memory_size   = 512 # Especificado en el diagrama
+  timeout       = 60  # Especificado en el diagrama
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+}
+
+# --- API Gateway (Con CORS habilitado) y CloudWatch Logs ---
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "image-api-${var.environment}"
   protocol_type = "HTTP"
+  
+  cors_configuration {
+    allow_origins = ["*"]
+    allow_methods = ["POST", "OPTIONS"]
+    allow_headers = ["content-type", "authorization"]
+  }
 }
 
 resource "aws_cloudwatch_log_group" "api_gw_logs" {
@@ -151,30 +227,30 @@ resource "aws_security_group" "vpc_endpoints" {
   }
 }
 
-# --- Rol de IAM Básico para Lambda ---
+# --- Rol de IAM Básico para Lambda Upload ---
 resource "aws_iam_role" "upload_role" {
   name = "upload-lambda-role-${var.environment}"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
+    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" } }]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+resource "aws_iam_role_policy_attachment" "upload_vpc_access" {
   role       = aws_iam_role.upload_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
-# =================================================================
+resource "aws_iam_role_policy" "upload_permissions" {
+  name = "upload-s3-permissions-${var.environment}"
+  role = aws_iam_role.upload_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{ Action = ["s3:PutObject"], Effect = "Allow", Resource = "${aws_s3_bucket.images.arn}/uploads/*" }]
+  })
+}
 
-# --- . Segunda Lambda (Crop) y su Rol IAM ---
+# --- Segunda Lambda (Crop) y su Rol IAM ---
 resource "aws_iam_role" "crop_role" {
   name = "crop-lambda-role-${var.environment}"
   assume_role_policy = jsonencode({
@@ -200,7 +276,8 @@ resource "aws_iam_role_policy" "crop_permissions" {
         Resource = "${aws_s3_bucket.images.arn}/*"
       },
       {
-        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+        # Añadido ChangeMessageVisibility según el diagrama
+        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"],
         Effect   = "Allow",
         Resource = aws_sqs_queue.main_queue.arn
       }
@@ -208,23 +285,7 @@ resource "aws_iam_role_policy" "crop_permissions" {
   })
 }
 
-resource "aws_lambda_function" "crop" {
-  function_name = "crop-lambda-${var.environment}"
-  role          = aws_iam_role.crop_role.arn
-  handler       = "index.handler"
-  runtime       = "nodejs20.x"
-  filename      = "lambda/lambda_dummy.zip" # Reutilizamos tu zip de prueba
-  memory_size   = 512
-  timeout       = 60
-  vpc_config {
-    subnet_ids         = aws_subnet.private[*].id
-    security_group_ids = [aws_security_group.lambda_sg.id]
-  }
-}
-
-# --- . Eventos y Triggers (S3 -> SQS -> Lambda) ---
-
-# Permiso para que S3 escriba en la cola SQS
+# --- Eventos y Triggers (S3 -> SQS -> Lambda) ---
 resource "aws_sqs_queue_policy" "s3_to_sqs" {
   queue_url = aws_sqs_queue.main_queue.id
   policy = jsonencode({
@@ -239,7 +300,6 @@ resource "aws_sqs_queue_policy" "s3_to_sqs" {
   })
 }
 
-# Notificación de S3 a SQS
 resource "aws_s3_bucket_notification" "bucket_notification" {
   bucket = aws_s3_bucket.images.id
   queue {
@@ -250,14 +310,13 @@ resource "aws_s3_bucket_notification" "bucket_notification" {
   depends_on = [aws_sqs_queue_policy.s3_to_sqs]
 }
 
-# Trigger de SQS a Lambda (Crop)
 resource "aws_lambda_event_source_mapping" "sqs_to_crop" {
   event_source_arn = aws_sqs_queue.main_queue.arn
   function_name    = aws_lambda_function.crop.arn
   batch_size       = 5
 }
 
-# --- . Alarmas de CloudWatch (DLQ) ---
+# --- Alarmas de CloudWatch (DLQ) ---
 resource "aws_cloudwatch_metric_alarm" "dlq_alarm" {
   alarm_name          = "dlq-messages-alarm-${var.environment}"
   comparison_operator = "GreaterThanThreshold"
