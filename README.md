@@ -28,15 +28,18 @@ Antes de desplegar la infraestructura, asegúrese de contar con las siguientes h
 Una vez instaladas, configure sus credenciales de acceso a AWS ejecutando:
 - aws configure
 ## Pasos de Despliegue
+
 **1. Inicializar el proyecto:**
 Descarga los proveedores (plugins) necesarios para que Terraform interactúe con AWS.
 - terraform init
+
 **2. Gestión de Entornos (Workspaces):**
 Este proyecto utiliza workspaces para separar los entornos de desarrollo, pruebas y producción. Cree el entorno deseado:
 - terraform workspace new dev
 - terraform workspace new qa
 - terraform workspace new prod
 (Si el workspace ya existe, utilice terraform workspace select dev, qa o prod)
+
 **3. Despliegue de la Infraestructura:**
 Ejecute la planificación y aplicación de los recursos en la nube.
 - terraform apply -var="environment=dev" -auto-approve
