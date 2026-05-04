@@ -1,6 +1,6 @@
 # Architecture - AWS server with Terraform (UPAO)
 
-Este proyecto implementa una arquitectura serverless escalable y segura en AWS utilizando Terraform. Se enfoca en el procesamiento de imágenes mediante eventos, integrando servicios de red, computación y mensajería.
+Este proyecto implementa una arquitectura - escalable y segura en AWS utilizando Terraform. Se enfoca en el procesamiento de imágenes mediante eventos, integrando servicios de red, computación y mensajería.
 
 ## Arquitectura
 
