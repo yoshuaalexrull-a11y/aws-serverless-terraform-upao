@@ -1,4 +1,4 @@
-# AWS Serverless Architecture with Terraform (UPAO)
+# Architecture - AWS server with Terraform (UPAO)
 
 Este proyecto implementa una arquitectura serverless escalable y segura en AWS utilizando Terraform. Se enfoca en el procesamiento de imágenes mediante eventos, integrando servicios de red, computación y mensajería.
 
@@ -38,7 +38,6 @@ Este proyecto utiliza workspaces para separar los entornos de desarrollo, prueba
 - terraform workspace new dev
 - terraform workspace new qa
 - terraform workspace new prod
-(Si el workspace ya existe, utilice terraform workspace select dev, qa o prod)
 
 **3. Despliegue de la Infraestructura:**
 Ejecute la planificación y aplicación de los recursos en la nube.
