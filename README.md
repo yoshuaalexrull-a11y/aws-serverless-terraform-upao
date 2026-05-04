@@ -8,7 +8,7 @@ La infraestructura se despliega dentro de una VPC personalizada con subredes pú
 
 Para cumplir con los estándares de seguridad y el diseño establecido:
 *   **NAT Gateways:** Se implementaron con IPs elásticas en las subredes públicas para permitir la salida segura a internet desde las subredes privadas.
-*   **VPC Endpoints:** Se configuraron Endpoints (S3 Gateway e Interface SQS) para asegurar que la comunicación entre las funciones Lambda y los servicios de almacenamiento/mensajería se realice de forma privada a través de la red troncal de AWS, sin exponer los datos al internet público.
+*   **VPC Endpoints:** Se configuraron Endpoints (S3 Gateway e Interface SQS) para asegurar que la comunicación entre las funciones Lambda y los servicios de almacenamiento/mensajería se realice de forma privada a través de la red troncal de AWS, sin exponer los datos al internet público, realizando un buen trabajo.
 
 ## Tecnologías Utilizadas
 
